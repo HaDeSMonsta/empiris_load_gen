@@ -3,16 +3,19 @@ mod gen;
 
 use crate::gen::go;
 use clap::Parser;
-use rand::{Rng, SeedableRng};
-use std::any::type_name;
-use std::fmt::Debug;
-use std::net::SocketAddr;
-use std::str::FromStr;
-use std::time::Duration;
-use std::{env, thread};
-use std::sync::Arc;
 use logger_utc::log;
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+use serde::Serialize;
+use std::any::type_name;
+use std::fmt::Debug;
+use std::fs::OpenOptions;
+use std::io::{BufWriter, Write};
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::Duration;
+use std::env;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::sleep;
 
@@ -55,6 +58,12 @@ const DEFAULT_SEED: [u8; 32] = [
     1,
     28
 ];
+
+#[derive(Debug, Serialize)]
+struct Results {
+    request_count: u128,
+    average_ms: u128,
+}
 
 /// Load generator for mock SUT
 #[derive(Parser)]
@@ -185,17 +194,35 @@ async fn main() {
     }
 
     let request_count;
-    let average_response_time;
+    let average_ms;
     {
         let results = results.lock().await;
         request_count = results.len() as u128;
-        average_response_time = results.iter()
-                                           .map(|d| d.as_millis())
-                                           .sum::<u128>() / request_count;
+        average_ms = results.iter()
+                            .map(|d| d.as_millis())
+                            .sum::<u128>() / request_count;
     }
-    log(format!(
-        "{request_count} Request with an average response time of {average_response_time} ms"
-    ));
+    let results = Results {
+        request_count,
+        average_ms,
+    };
+
+    log(format!("Results: {results:?}"));
+
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open("Results.json")
+        .unwrap();
+
+    let mut writer = BufWriter::new(file);
+
+    writeln!(
+        writer,
+        "{}",
+        serde_json::to_string(&results).unwrap()
+    ).unwrap();
 
     log("Joined all workers, shutting down");
 }
