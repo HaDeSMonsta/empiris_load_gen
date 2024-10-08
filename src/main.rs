@@ -8,12 +8,17 @@ use std::any::type_name;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread::sleep;
 use std::time::Duration;
 use std::{env, thread};
+use std::sync::Arc;
 use logger_utc::log;
 use rand::rngs::StdRng;
+use tokio::sync::{mpsc, Mutex};
+use tokio::time::sleep;
+
+mod math {
+    tonic::include_proto!("math");
+}
 
 /// Generated via rand itself
 const DEFAULT_SEED: [u8; 32] = [
@@ -139,7 +144,8 @@ where
         .expect(&format!("Unable to parse variable {key} to {}", type_name::<T>()))
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let (addr, num_threads, sleep_secs, seed) = get_args();
     let mut rng = StdRng::from_seed(seed);
 
@@ -150,13 +156,13 @@ fn main() {
     log(format!("Configuration is ok, starting {num_threads} threads"));
 
     for id in 0..num_threads {
-        let (tx, rx) = mpsc::channel::<()>();
+        let (tx, rx) = mpsc::channel::<()>(100);
         let rng = StdRng::from_seed(rng.gen());
         let results = results.clone();
 
-        let handle = thread::spawn(move ||
-            go(addr, rng, rx, results, id)
-        );
+        let handle = tokio::spawn(async move {
+            go(addr, rng, rx, results, id).await;
+        });
 
         channels.push(tx);
         workers.push(handle);
@@ -164,24 +170,32 @@ fn main() {
 
     log(format!("We are running, sleeping {sleep_secs} seconds"));
 
-    sleep(Duration::from_secs(sleep_secs));
+    sleep(Duration::from_secs(sleep_secs)).await;
 
     log("Stopping threads");
 
     for channel in channels {
-        channel.send(()).unwrap()
+        channel.send(()).await.unwrap()
     }
 
     log("Send stop signal, joining");
 
     for worker in workers {
-        worker.join().unwrap();
+        worker.await.unwrap();
     }
 
+    let request_count;
+    let average_response_time;
     {
-        let results = results.lock();
-        log(format!("Results: {results:?}"));
+        let results = results.lock().await;
+        request_count = results.len() as u128;
+        average_response_time = results.iter()
+                                           .map(|d| d.as_millis())
+                                           .sum::<u128>() / request_count;
     }
+    log(format!(
+        "{request_count} Request with an average response time of {average_response_time} ms"
+    ));
 
     log("Joined all workers, shutting down");
 }
