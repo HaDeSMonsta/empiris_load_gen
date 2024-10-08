@@ -1,17 +1,55 @@
 mod comm;
-mod thread;
+mod gen;
 
-use std::any::type_name;
+use crate::gen::go;
 use clap::Parser;
-use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use std::env;
+use std::any::type_name;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::sleep;
+use std::time::Duration;
+use std::{env, thread};
+use logger_utc::log;
+use rand::rngs::StdRng;
 
 /// Generated via rand itself
-const DEFAULT_SEED: [u8; 32] = [135, 142, 87, 161, 18, 25, 215, 9, 131, 174, 29, 172, 100, 27, 29, 209, 74, 97, 60, 11, 34, 210, 34, 123, 121, 140, 210, 228, 230, 164, 1, 28];
+const DEFAULT_SEED: [u8; 32] = [
+    135,
+    142,
+    87,
+    161,
+    18,
+    25,
+    215,
+    9,
+    131,
+    174,
+    29,
+    172,
+    100,
+    27,
+    29,
+    209,
+    74,
+    97,
+    60,
+    11,
+    34,
+    210,
+    34,
+    123,
+    121,
+    140,
+    210,
+    228,
+    230,
+    164,
+    1,
+    28
+];
 
 /// Load generator for mock SUT
 #[derive(Parser)]
@@ -31,14 +69,14 @@ struct Args {
 
     /// Seconds to wait until termination
     #[arg(long)]
-    time_secs: Option<u32>,
+    time_secs: Option<u64>,
 
     /// Seed to use (please don't use args for that, use .env file)
     #[arg(short, long, use_value_delimiter = true)]
     seed: Option<String>,
 }
 
-fn get_args() -> (SocketAddr, u8, u32, [u8; 32]) {
+fn get_args() -> (SocketAddr, u8, u64, [u8; 32]) {
     let args = Args::parse();
     let _ = dotenv::dotenv();
 
@@ -79,15 +117,16 @@ fn get_args() -> (SocketAddr, u8, u32, [u8; 32]) {
 
     let num_threads = args.num_threads
                           .unwrap_or(handle_env("NUM_THREADS"));
-    
+    assert_ne!(0, num_threads, "How do you want to run with 0 threads?");
+
     let time_secs = args.time_secs
-        .unwrap_or(handle_env("TIME_SECS"));
-        (
-            addr.parse().expect(&format!("{addr} is not a valid SocketAddr")),
-            num_threads,
-            time_secs,
-            seed,
-        )
+                        .unwrap_or(handle_env("TIME_SECS"));
+    (
+        addr.parse().expect(&format!("{addr} is not a valid SocketAddr")),
+        num_threads,
+        time_secs,
+        seed,
+    )
 }
 
 fn handle_env<T: FromStr>(key: &'static str) -> T
@@ -101,14 +140,48 @@ where
 }
 
 fn main() {
-    println!("Hello, world!");
-
-    let (addr, num_threads, time_secs, seed) = get_args();
-    println!("Addr: {addr}\n\
-    Num threads: {num_threads}\n\
-    Time secs: {time_secs}\n\
-    Seed: {seed:?}\n");
-
+    let (addr, num_threads, sleep_secs, seed) = get_args();
     let mut rng = StdRng::from_seed(seed);
-    println!("Rngd: {}", rng.gen::<u8>());
+
+    let mut channels = Vec::new();
+    let mut workers = Vec::new();
+    let results = Arc::new(Mutex::new(Vec::new()));
+
+    log(format!("Configuration is ok, starting {num_threads} threads"));
+
+    for id in 0..num_threads {
+        let (tx, rx) = mpsc::channel::<()>();
+        let rng = StdRng::from_seed(rng.gen());
+        let results = results.clone();
+
+        let handle = thread::spawn(move ||
+            go(addr, rng, rx, results, id)
+        );
+
+        channels.push(tx);
+        workers.push(handle);
+    }
+
+    log(format!("We are running, sleeping {sleep_secs} seconds"));
+
+    sleep(Duration::from_secs(sleep_secs));
+
+    log("Stopping threads");
+
+    for channel in channels {
+        channel.send(()).unwrap()
+    }
+
+    log("Send stop signal, joining");
+
+    for worker in workers {
+        worker.join().unwrap();
+    }
+
+    {
+        let results = results.lock();
+        log(format!("Results: {results:?}"));
+    }
+
+    log("Joined all workers, shutting down");
 }
