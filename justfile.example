@@ -1,0 +1,30 @@
+bin := "target/release/load_gen"
+ip := ""
+port_old := "8090"
+port_new := "8080"
+num_threads := "5"
+time_secs := "5"
+output_old := "old"
+output_new := "new"
+
+default:
+	@just --list
+
+build:
+	cargo build
+	cargo build --release
+
+bench: build
+	{{bin}} \
+		--target-ip {{ip}} \
+		--target-port {{port_old}} \
+		-n {{num_threads}} \
+		--time-secs {{time_secs}} \
+		-o {{output_old}}.json
+
+	{{bin}} \
+		--target-ip {{ip}} \
+		--target-port {{port_new}} \
+		-n {{num_threads}} \
+		--time-secs {{time_secs}} \
+		-o {{output_new}}.json
