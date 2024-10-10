@@ -92,7 +92,7 @@ struct Args {
     /// Seed to use (please don't use args for that, use .env file)
     #[arg(short, long, use_value_delimiter = true)]
     seed: Option<String>,
-    
+
     /// File to write the results to
     #[arg(short, long)]
     output_file: Option<PathBuf>,
@@ -143,17 +143,16 @@ fn get_args() -> (SocketAddr, u8, u64, [u8; 32], PathBuf) {
 
     let time_secs = args.time_secs
                         .unwrap_or(handle_env("TIME_SECS"));
-    
+
     let tmp_file = if let Some(file) = args.output_file {
         Some(file)
-    } else if let Ok(file) = env::var("OUTPUT_FILE") { 
+    } else if let Ok(file) = env::var("OUTPUT_FILE") {
         let file = PathBuf::from(file);
         Some(file)
     } else { None };
-    
-    let output_file = if let Some(file) = tmp_file {file}
-    else { DEFAULT_PATH.to_path_buf() };
-        
+
+    let output_file = if let Some(file) = tmp_file { file } else { DEFAULT_PATH.to_path_buf() };
+
     (
         addr.parse().expect(&format!("{addr} is not a valid SocketAddr")),
         num_threads,
@@ -176,9 +175,9 @@ where
 #[tokio::main]
 async fn main() {
     let (
-        addr, 
-        num_threads, 
-        sleep_secs, 
+        addr,
+        num_threads,
+        sleep_secs,
         seed,
         output_path,
     ) = get_args();
@@ -234,6 +233,8 @@ async fn main() {
     };
 
     log(format!("{results:?}"));
+
+    log(format!("Writing report to {output_path:?}"));
 
     let file = OpenOptions::new()
         .create(true)
