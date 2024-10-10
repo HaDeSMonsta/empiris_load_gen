@@ -8,6 +8,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde::Serialize;
 use std::any::type_name;
+use std::cell::LazyCell;
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
@@ -16,12 +17,15 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::env;
+use std::path::PathBuf;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::sleep;
 
 mod math {
     tonic::include_proto!("math");
 }
+
+const DEFAULT_PATH: LazyCell<PathBuf> = LazyCell::new(|| PathBuf::from("results.json"));
 
 /// Generated via rand itself
 const DEFAULT_SEED: [u8; 32] = [
@@ -88,9 +92,13 @@ struct Args {
     /// Seed to use (please don't use args for that, use .env file)
     #[arg(short, long, use_value_delimiter = true)]
     seed: Option<String>,
+    
+    /// File to write the results to
+    #[arg(short, long)]
+    output_file: Option<PathBuf>,
 }
 
-fn get_args() -> (SocketAddr, u8, u64, [u8; 32]) {
+fn get_args() -> (SocketAddr, u8, u64, [u8; 32], PathBuf) {
     let args = Args::parse();
     let _ = dotenv::dotenv();
 
@@ -135,11 +143,23 @@ fn get_args() -> (SocketAddr, u8, u64, [u8; 32]) {
 
     let time_secs = args.time_secs
                         .unwrap_or(handle_env("TIME_SECS"));
+    
+    let tmp_file = if let Some(file) = args.output_file {
+        Some(file)
+    } else if let Ok(file) = env::var("OUTPUT_FILE") { 
+        let file = PathBuf::from(file);
+        Some(file)
+    } else { None };
+    
+    let output_file = if let Some(file) = tmp_file {file}
+    else { DEFAULT_PATH.to_path_buf() };
+        
     (
         addr.parse().expect(&format!("{addr} is not a valid SocketAddr")),
         num_threads,
         time_secs,
         seed,
+        output_file,
     )
 }
 
@@ -155,7 +175,13 @@ where
 
 #[tokio::main]
 async fn main() {
-    let (addr, num_threads, sleep_secs, seed) = get_args();
+    let (
+        addr, 
+        num_threads, 
+        sleep_secs, 
+        seed,
+        output_path,
+    ) = get_args();
     let mut rng = StdRng::from_seed(seed);
 
     let mut channels = Vec::new();
@@ -177,7 +203,7 @@ async fn main() {
         workers.push(handle);
     }
 
-    log(format!("We are running, sleeping {sleep_secs} seconds"));
+    log(format!("We are running, sleeping for {sleep_secs} seconds"));
 
     sleep(Duration::from_secs(sleep_secs)).await;
 
@@ -207,13 +233,13 @@ async fn main() {
         average_ms,
     };
 
-    log(format!("Results: {results:?}"));
+    log(format!("{results:?}"));
 
     let file = OpenOptions::new()
         .create(true)
         .truncate(true)
         .write(true)
-        .open("Results.json")
+        .open(output_path)
         .unwrap();
 
     let mut writer = BufWriter::new(file);
