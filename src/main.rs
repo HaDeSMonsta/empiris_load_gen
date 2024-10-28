@@ -70,7 +70,7 @@ struct Results {
 }
 
 /// Load generator for mock SUT
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// The target IP Address
@@ -109,7 +109,7 @@ fn get_args() -> (SocketAddr, u8, u64, [u8; 32], PathBuf) {
     };
 
     let port = args.target_port
-                   .unwrap_or(handle_env("TARGET_PORT"));
+                   .unwrap_or_else(|| handle_env("TARGET_PORT"));
 
     let addr = format!("{ip}:{port}");
 
@@ -138,11 +138,11 @@ fn get_args() -> (SocketAddr, u8, u64, [u8; 32], PathBuf) {
     };
 
     let num_threads = args.num_threads
-                          .unwrap_or(handle_env("NUM_THREADS"));
+                          .unwrap_or_else(|| handle_env("NUM_THREADS"));
     assert_ne!(0, num_threads, "How do you want to run with 0 threads?");
 
     let time_secs = args.time_secs
-                        .unwrap_or(handle_env("TIME_SECS"));
+                        .unwrap_or_else(|| handle_env("TIME_SECS"));
 
     let tmp_file = if let Some(file) = args.output_file {
         Some(file)
