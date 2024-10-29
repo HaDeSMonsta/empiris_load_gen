@@ -2,21 +2,21 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::comm;
+use crate::math::MathTask;
 use logger_utc::log;
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::Rng;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
-use crate::comm;
-use crate::math::MathTask;
 
 pub async fn go(
     addr: SocketAddr,
     mut rng: StdRng,
     mut rx: Receiver<()>,
     results: Arc<Mutex<Vec<Duration>>>,
-    id: u8,
+    id: u16,
 ) {
     let mut local_times = Vec::new();
     loop {
@@ -51,6 +51,10 @@ pub async fn go(
 
         let start = Instant::now();
         let res = comm::send(addr, task).await;
+        let Some(res) = res else {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            continue;
+        };
         let elapsed = start.elapsed();
         local_times.push(elapsed);
 

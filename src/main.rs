@@ -9,15 +9,15 @@ use rand::{Rng, SeedableRng};
 use serde::Serialize;
 use std::any::type_name;
 use std::cell::LazyCell;
+use std::env;
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use std::env;
-use std::path::PathBuf;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::sleep;
 
@@ -83,7 +83,7 @@ struct Args {
 
     /// Number of worker threads
     #[arg(short, long)]
-    num_threads: Option<u8>,
+    num_threads: Option<u16>,
 
     /// Seconds to wait until termination
     #[arg(long)]
@@ -98,7 +98,7 @@ struct Args {
     output_file: Option<PathBuf>,
 }
 
-fn get_args() -> (SocketAddr, u8, u64, [u8; 32], PathBuf) {
+fn get_args() -> (SocketAddr, u16, u64, [u8; 32], PathBuf) {
     let args = Args::parse();
     let _ = dotenv::dotenv();
 
