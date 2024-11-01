@@ -3,27 +3,23 @@ mod gen;
 
 use crate::gen::go;
 use clap::Parser;
-use logger_utc::log;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde::Serialize;
 use std::any::type_name;
 use std::cell::LazyCell;
-use std::env;
+use std::{env, thread};
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::sleep;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex};
-use tokio::time::sleep;
-
-mod math {
-    tonic::include_proto!("math");
-}
+use tracing::{debug, info, Level};
+use tracing_subscriber::FmtSubscriber;
 
 const DEFAULT_PATH: LazyCell<PathBuf> = LazyCell::new(|| PathBuf::from("results.json"));
 
@@ -172,8 +168,7 @@ where
         .expect(&format!("Unable to parse variable {key} to {}", type_name::<T>()))
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let (
         addr,
         num_threads,
@@ -183,45 +178,58 @@ async fn main() {
     ) = get_args();
     let mut rng = StdRng::from_seed(seed);
 
+    #[cfg(debug_assertions)]
+    let level = Level::DEBUG;
+    #[cfg(not(debug_assertions))]
+    let level = Level::INFO;
+    
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(level)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Setting default subscriber failed");
+
     let mut channels = Vec::new();
     let mut workers = Vec::new();
     let results = Arc::new(Mutex::new(Vec::new()));
 
-    log(format!("Configuration is ok, starting {num_threads} threads"));
+    info!("Configuration is ok, starting {num_threads} threads");
 
     for id in 0..num_threads {
-        let (tx, rx) = mpsc::channel::<()>(100);
+        let (tx, rx) = mpsc::channel();
         let rng = StdRng::from_seed(rng.gen());
         let results = results.clone();
 
-        let handle = tokio::spawn(async move {
-            go(addr, rng, rx, results, id).await;
+        let handle = thread::spawn(move || {
+            go(addr, rng, rx, results, id);
         });
 
         channels.push(tx);
         workers.push(handle);
     }
 
-    log(format!("We are running, sleeping for {sleep_secs} seconds"));
+    info!("We are running, sleeping for {sleep_secs} seconds");
 
-    sleep(Duration::from_secs(sleep_secs)).await;
+    sleep(Duration::from_secs(sleep_secs));
 
-    log("Stopping threads");
+    info!("Woke up, stopping threads");
 
     for channel in channels {
-        channel.send(()).await.unwrap()
+        channel.send(()).unwrap()
     }
 
-    log("Send stop signal, joining");
+    debug!("Sent stop signal, joining");
 
     for worker in workers {
-        worker.await.unwrap();
+        worker.join().unwrap();
     }
+    
+    debug!("Joined them all, calculating results");
 
     let request_count;
     let average_ms;
     {
-        let results = results.lock().await;
+        let results = results.lock().unwrap();
         request_count = results.len() as u128;
         average_ms = results.iter()
                             .map(|d| d.as_millis())
@@ -232,9 +240,9 @@ async fn main() {
         average_ms,
     };
 
-    log(format!("{results:?}"));
+    debug!("{results:?}");
 
-    log(format!("Writing report to {output_path:?}"));
+    info!("Writing report to {output_path:?}");
 
     let file = OpenOptions::new()
         .create(true)
@@ -251,5 +259,5 @@ async fn main() {
         serde_json::to_string(&results).unwrap()
     ).unwrap();
 
-    log("Joined all workers, shutting down");
+    info!("Wrote report, shutting down");
 }

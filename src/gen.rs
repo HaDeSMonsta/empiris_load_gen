@@ -1,45 +1,40 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::sync::mpsc::Receiver;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use crate::comm;
-use crate::math::MathTask;
-use logger_utc::log;
 use rand::rngs::StdRng;
 use rand::Rng;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::Mutex;
-use tokio::time::Instant;
+use tracing::debug;
 
-pub async fn go(
+pub fn go(
     addr: SocketAddr,
     mut rng: StdRng,
-    mut rx: Receiver<()>,
+    rx: Receiver<()>,
     results: Arc<Mutex<Vec<Duration>>>,
     id: u16,
 ) {
     let mut local_times = Vec::new();
     loop {
         if let Ok(_) = rx.try_recv() {
-            log(format!("Thread [{id}]: Received signal, attempting to get result lock"));
+            debug!("Thread [{id}]: Received signal, attempting to get result lock");
             {
-                log(format!("Thread [{id}]: Got result lock"));
-                let mut results = results.lock().await;
+                debug!("Thread [{id}]: Got result lock");
+                let mut results = results.lock().unwrap();
                 results.extend(local_times);
-                log(format!("Thread [{id}]: Wrote results, dropping lock and stopping"));
+                    debug!("Thread [{id}]: Wrote results, dropping lock and stopping");
             }
             break;
         }
+        debug!("Thread [{id}]: Running");
 
         let x = rng.gen_range(0..(i32::MAX / 2));
         let y = rng.gen_range(0..(i32::MAX / 2));
         let operation = rng.gen_range(0..=3);
 
-        let task = MathTask {
-            x,
-            y,
-            operation,
-        };
+        debug!("Thread [{id}]: Created task");
 
         let expected = match operation {
             0 => x + y,
@@ -48,16 +43,26 @@ pub async fn go(
             3 => x % y,
             _ => panic!("Impossible state"),
         };
+        debug!("Thread [{id}]: Created expected");
 
         let start = Instant::now();
-        let res = comm::send(addr, task).await;
+        debug!("Thread [{id}]: Got start time");
+        let res = comm::send(addr, x, y, operation, id);
+        debug!("Thread [{id}]: Got result");
         let Some(res) = res else {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            let sleep_time = 10;
+            debug!("Thread [{id}]: Res is None, sleeping for {sleep_time} ms");
+            sleep(Duration::from_millis(sleep_time));
             continue;
         };
+        debug!("Thread [{id}]: Res is Some");
         let elapsed = start.elapsed();
+        debug!("Thread [{id}]: Got elapsed time");
         local_times.push(elapsed);
+        debug!("Thread [{id}]: Pushed time");
 
-        assert_eq!(expected, res.sol, "Unexpected response");
+        assert_eq!(expected, res, "Unexpected response");
+        debug!("Thread [{id}]: Asserted response");
     }
 }
+
