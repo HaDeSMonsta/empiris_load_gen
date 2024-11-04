@@ -197,7 +197,7 @@ fn main() {
 
     for id in 0..num_threads {
         let (tx, rx) = mpsc::channel();
-        let rng = StdRng::from_seed(rng.gen());
+        let rng = StdRng::from_seed(rng.random());
         let results = results.clone();
 
         let handle = thread::spawn(move || {
